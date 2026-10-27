@@ -9,7 +9,8 @@ bad()  { fail=1; note "$1" "FAIL: $2"; }
 echo "=== Hermes doctor ($(date -Iseconds)) ==="
 
 # --- profile identity ---
-prof=$(hermes profile show 2>/dev/null | grep -oE 'Profile:[[:space:]]+\S+' | head -1 | awk '{print $2}')
+prof=$(hermes profile list 2>/dev/null | awk '/─/{getline; gsub(/^[ │◆─]+|[ ]+$/,""); print $1; exit}')
+[ -n "${prof:-}" ] || prof=default
 note profile "${prof:-unknown}"
 [ -n "${prof:-}" ] || bad profile "hermes profile show failed"
 
@@ -27,15 +28,17 @@ prof_skills=$HOME/.hermes/profiles/$prof/skills
 count_skill_dirs() {
   local d=$1
   [ -d "$d" ] || { echo 0; return; }
-  find "$d" -mindepth 2 -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l
+  find "$d" -mindepth 2 -name SKILL.md 2>/dev/null | wc -l
 }
 g=$(count_skill_dirs "$skills_dir"); p=$(count_skill_dirs "$prof_skills")
 note skills.global "$g"
 note skills.profile "$p"
-if [ -d "$prof_skills" ] && [ -d "$skills_dir" ]; then
+bundled=$HOME/.hermes/hermes-agent/skills
+if [ -d "$skills_dir" ] && [ -d "$bundled" ]; then
+  bundled_names=$(cut -d: -f1 "$skills_dir/.bundled_manifest" 2>/dev/null | sort -u)
   dup=$(comm -12 \
-    <(find "$skills_dir" -mindepth 2 -maxdepth 2 -name SKILL.md | awk -F/ '{print $(NF-1)}' | sort -u) \
-    <(find "$prof_skills" -mindepth 2 -maxdepth 2 -name SKILL.md | awk -F/ '{print $(NF-1)}' | sort -u))
+    <(find "$skills_dir" -mindepth 2 -name SKILL.md | awk -F/ '{print $(NF-1)}' | sort -u) \
+    <(find "$bundled" -mindepth 2 -name SKILL.md | awk -F/ '{print $(NF-1)}' | sort -u) | comm -23 - <(printf '%s\n' "$bundled_names" | sort -u))
   if [ -n "$dup" ]; then
     bad skills.duplicates "$(printf '%s' "$dup" | tr '\n' ' ')"
   else
@@ -60,7 +63,7 @@ if jobs=$(hermes cron list 2>/dev/null | grep -c . ); then
 fi
 
 # --- sessions ---
-hermes sessions list 2>/dev/null | head -1 | grep -qi 'session' \
+hermes sessions list 2>/dev/null | grep -qiE 'session|ID|─' \
   && note sessions "store readable" || bad sessions "cannot read session store; try: hermes sessions repair"
 
 # --- agent log errors (last 24h) ---
